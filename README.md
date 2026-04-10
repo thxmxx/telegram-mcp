@@ -12,7 +12,15 @@ The wizard asks for your Telegram bot token and user ID, registers the MCP serve
 
 ## Usage
 
-In any Claude Code session, activate Telegram with the slash command:
+Start Claude Code without permission prompts so it can work autonomously:
+
+```bash
+claude --dangerously-skip-permissions
+```
+
+> ⚠️ This flag disables all tool confirmation prompts — file writes, shell commands, everything. Use only on your own machine for personal workflows.
+
+Then activate Telegram in any session:
 
 ```
 /use-telegram

@@ -17,17 +17,21 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const rl  = createInterface({ input, output });
+const rl = createInterface({ input, output });
 const ask = (q) => rl.question(q);
 
-const BOLD  = "\x1b[1m";
+const BOLD = "\x1b[1m";
 const GREEN = "\x1b[32m";
-const CYAN  = "\x1b[36m";
-const DIM   = "\x1b[2m";
+const CYAN = "\x1b[36m";
+const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-const ok  = (msg) => console.log(`${GREEN}✔${RESET}  ${msg}`);
-const die = (msg) => { console.error(`\x1b[31m✘${RESET}  ${msg}`); rl.close(); exit(1); };
+const ok = (msg) => console.log(`${GREEN}✔${RESET}  ${msg}`);
+const die = (msg) => {
+  console.error(`\x1b[31m✘${RESET}  ${msg}`);
+  rl.close();
+  exit(1);
+};
 
 // ── Pre-flight ────────────────────────────────────────────────────────────────
 
@@ -38,7 +42,9 @@ if (major < 18) die(`Node.js 18+ required (you have ${process.versions.node})`);
 ok(`Node.js ${process.versions.node}`);
 
 try {
-  const ver = execFileSync("claude", ["--version"], { encoding: "utf8" }).trim();
+  const ver = execFileSync("claude", ["--version"], {
+    encoding: "utf8",
+  }).trim();
   ok(`Claude Code: ${ver}`);
 } catch {
   die("`claude` not found. Install: https://docs.claude.ai/claude-code");
@@ -71,31 +77,51 @@ console.log(`\n${BOLD}Registering MCP server globally…${RESET}`);
 const serverPath = new URL("./index.js", import.meta.url).pathname;
 
 try {
-  execFileSync("claude", [
-    "mcp", "add", "--scope", "user",   // global, persists across all projects
-    "telegram-mcp",
-    "-e", `TELEGRAM_BOT_TOKEN=${token}`,
-    "-e", `TELEGRAM_CHAT_ID=${chatId}`,
-    "--", "node", serverPath,
-  ], { stdio: "inherit" });
+  execFileSync(
+    "claude",
+    [
+      "mcp",
+      "add",
+      "--scope",
+      "user", // global, persists across all projects
+      "telegram-mcp",
+      "-e",
+      `TELEGRAM_BOT_TOKEN=${token}`,
+      "-e",
+      `TELEGRAM_CHAT_ID=${chatId}`,
+      "--",
+      "node",
+      serverPath,
+    ],
+    { stdio: "inherit" },
+  );
 } catch {
   // Fallback: older Claude Code versions without --scope flag
   try {
-    execFileSync("claude", [
-      "mcp", "add",
-      "telegram-mcp",
-      "-e", `TELEGRAM_BOT_TOKEN=${token}`,
-      "-e", `TELEGRAM_CHAT_ID=${chatId}`,
-      "--", "node", serverPath,
-    ], { stdio: "inherit" });
+    execFileSync(
+      "claude",
+      [
+        "mcp",
+        "add",
+        "telegram-mcp",
+        "-e",
+        `TELEGRAM_BOT_TOKEN=${token}`,
+        "-e",
+        `TELEGRAM_CHAT_ID=${chatId}`,
+        "--",
+        "node",
+        serverPath,
+      ],
+      { stdio: "inherit" },
+    );
   } catch {
     die(
       "`claude mcp add` failed.\n" +
-      "  Update Claude Code: https://docs.claude.ai/claude-code\n\n" +
-      "  Manual config:\n" +
-      `    TELEGRAM_BOT_TOKEN=${token}\n` +
-      `    TELEGRAM_CHAT_ID=${chatId}\n` +
-      `    command: node ${serverPath}`
+        "  Update Claude Code: https://docs.claude.ai/claude-code\n\n" +
+        "  Manual config:\n" +
+        `    TELEGRAM_BOT_TOKEN=${token}\n` +
+        `    TELEGRAM_CHAT_ID=${chatId}\n` +
+        `    command: node ${serverPath}`,
     );
   }
 }
@@ -108,17 +134,19 @@ const commandsDir = join(homedir(), ".claude", "commands");
 mkdirSync(commandsDir, { recursive: true });
 
 const commandPath = join(commandsDir, "use-telegram.md");
-writeFileSync(commandPath, `# use-telegram
+writeFileSync(
+  commandPath,
+  `# use-telegram
 
 Activate Telegram integration for this Claude Code session.
 
 ## What this does
 
-Enables the telegram_notify, telegram_ask and telegram_choose tools so you
-can be notified and asked questions on your phone while Claude works.
+Enables telegram_notify, telegram_ask and telegram_choose so the user
+receives updates and can respond from their phone or terminal.
 
-The instance name is derived automatically from the current folder and
-session ID, so messages on Telegram always show which session is talking.
+This session runs with --dangerously-skip-permissions so Claude never
+interrupts the task to ask for tool confirmations in the terminal.
 
 ## Modes
 
@@ -127,21 +155,24 @@ session ID, so messages on Telegram always show which session is talking.
 
 ## Behaviour
 
-When this command is active:
-- Use telegram_notify for progress updates and completed tasks
-- Use telegram_ask when you need a free-form answer from the user
-- Use telegram_choose when the user must pick from known options
-- Always prefix messages with the auto-generated instance label
-- Mirror every question to the terminal too — whoever answers first wins
-- After any long-running task, send a completion summary via telegram_notify
+You MUST use the Telegram tools for this session. Specifically:
+
+- Call telegram_notify **immediately** to confirm Telegram is active
+- Call telegram_notify for every meaningful progress update
+- Call telegram_notify when any task is fully complete, with a summary
+- Call telegram_ask whenever you need a free-form answer from the user
+- Call telegram_choose whenever the user must pick from known options
+- Do NOT ask questions in the terminal — always use telegram_ask or telegram_choose
 
 ## Instance naming
 
-Generate the instance label as: \`{folder-name}#{short-session-id}\`
-Example: \`backend#a3f2\`, \`frontend#9c11\`
+At the start of this session, generate a label: \`{folder-name}#{4-char-random-hex}\`
+Examples: \`backend#a3f2\`, \`frontend#9c11\`
 
-Use the same label for the entire session.
-`);
+Use this exact label in every Telegram message for the entire session.
+Send as first message: \`[label] ✅ Telegram active — ready.\`
+`,
+);
 
 ok(`Slash command installed → ${commandPath}`);
 
@@ -150,7 +181,11 @@ ok(`Slash command installed → ${commandPath}`);
 console.log(`
 ${GREEN}${BOLD}All done!${RESET}
 
-  Restart Claude Code. From now on, in any session:
+  Start Claude Code with:
+
+    ${BOLD}claude --dangerously-skip-permissions${RESET}
+
+  Then activate Telegram in any session:
 
     ${BOLD}/use-telegram${RESET}           full mode (notify + ask + choose)
     ${BOLD}/use-telegram notify${RESET}    notifications only
