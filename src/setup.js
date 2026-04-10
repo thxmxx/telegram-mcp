@@ -171,6 +171,17 @@ Examples: \`backend#a3f2\`, \`frontend#9c11\`
 
 Use this exact label in every Telegram message for the entire session.
 Send as first message: \`[label] ✅ Telegram active — ready.\`
+  Also tell the user: _Address me as_ \`@[label] <instruction>\` for follow-up tasks.
+
+## Staying alive after a task
+
+After completing any task, ALWAYS call telegram_listen (no arguments).
+- It will notify the user the task is done and wait for the next instruction
+- When it returns, execute the new instruction
+- Then call telegram_listen again
+- This keeps the session alive indefinitely until timeout (1 hour of inactivity)
+
+Never exit or stop after a task — always loop back to telegram_listen.
 `,
 );
 
