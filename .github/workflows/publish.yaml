@@ -12,7 +12,7 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
-      contents: write # needed to push the version bump commit
+      contents: write
       id-token: write
 
     steps:
@@ -26,33 +26,44 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
-        run: npm install
+      - name: Get commit message
+        id: msg
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "value=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          else
+            echo "value=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if docs-only
+        id: skip
+        run: |
+          MSG="${{ steps.msg.outputs.value }}"
+          if echo "$MSG" | grep -qiE "^docs(\(.+\))?:|^\[skip ci\]|^chore: bump version"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Determine version bump
         id: bump
+        if: steps.skip.outputs.skip == 'false'
         run: |
-          # Get the commit message that triggered this run
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            MSG="${{ github.event.pull_request.title }}"
-          else
-            MSG="$(git log -1 --pretty=%s)"
-          fi
-
-          echo "Commit message: $MSG"
-
-          # Detect breaking change
+          MSG="${{ steps.msg.outputs.value }}"
           if echo "$MSG" | grep -qiE "BREAKING CHANGE|!:"; then
             echo "type=major" >> $GITHUB_OUTPUT
-          # feat → minor
           elif echo "$MSG" | grep -qiE "^feat(\(.+\))?:"; then
             echo "type=minor" >> $GITHUB_OUTPUT
-          # everything else → patch
           else
             echo "type=patch" >> $GITHUB_OUTPUT
           fi
 
+      - name: Install dependencies
+        if: steps.skip.outputs.skip == 'false'
+        run: npm install
+
       - name: Bump version
+        if: steps.skip.outputs.skip == 'false'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -63,6 +74,7 @@ jobs:
           git push
 
       - name: Publish
+        if: steps.skip.outputs.skip == 'false'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

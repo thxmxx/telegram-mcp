@@ -74,6 +74,14 @@ If you answer from the terminal, Telegram confirms it:
 | `telegram_ask` | Ask a free-form question. Waits for reply. |
 | `telegram_choose` | Show option buttons. Waits for a tap. |
 
+## Updating
+
+```bash
+npx @thxmxx/telegram-mcp@latest init
+```
+
+Re-runs the setup with the latest version — updates the MCP server and the `/use-telegram` slash command automatically.
+
 ## Requirements
 
 - Node.js 18+
