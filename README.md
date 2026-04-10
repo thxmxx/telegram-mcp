@@ -93,6 +93,27 @@ Re-runs the setup with the latest version — updates the MCP server and the `/u
 
 On first use, Claude Code will ask you to approve the three tools this MCP server registers (`telegram_notify`, `telegram_ask`, `telegram_choose`). This is standard Claude Code behaviour — you can review exactly what is being granted before accepting.
 
+
+## Always-on per project
+
+To activate Telegram automatically every time you open Claude Code in a project, add to your `CLAUDE.md`:
+
+```markdown
+## Communication
+
+Always use /use-telegram in this session.
+```
+
+**Per project** — inside the repo (can be committed and shared with the team):
+```
+/your-project/CLAUDE.md
+```
+
+**Global** — applies to every project on your machine:
+```
+~/.claude/CLAUDE.md
+```
+
 ## Security
 
 - The MCP server only accepts responses from your configured Telegram user ID
