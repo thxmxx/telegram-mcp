@@ -17,21 +17,17 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const rl = createInterface({ input, output });
+const rl  = createInterface({ input, output });
 const ask = (q) => rl.question(q);
 
-const BOLD = "\x1b[1m";
+const BOLD  = "\x1b[1m";
 const GREEN = "\x1b[32m";
-const CYAN = "\x1b[36m";
-const DIM = "\x1b[2m";
+const CYAN  = "\x1b[36m";
+const DIM   = "\x1b[2m";
 const RESET = "\x1b[0m";
 
-const ok = (msg) => console.log(`${GREEN}✔${RESET}  ${msg}`);
-const die = (msg) => {
-  console.error(`\x1b[31m✘${RESET}  ${msg}`);
-  rl.close();
-  exit(1);
-};
+const ok  = (msg) => console.log(`${GREEN}✔${RESET}  ${msg}`);
+const die = (msg) => { console.error(`\x1b[31m✘${RESET}  ${msg}`); rl.close(); exit(1); };
 
 // ── Pre-flight ────────────────────────────────────────────────────────────────
 
@@ -42,9 +38,7 @@ if (major < 18) die(`Node.js 18+ required (you have ${process.versions.node})`);
 ok(`Node.js ${process.versions.node}`);
 
 try {
-  const ver = execFileSync("claude", ["--version"], {
-    encoding: "utf8",
-  }).trim();
+  const ver = execFileSync("claude", ["--version"], { encoding: "utf8" }).trim();
   ok(`Claude Code: ${ver}`);
 } catch {
   die("`claude` not found. Install: https://docs.claude.ai/claude-code");
@@ -76,52 +70,43 @@ console.log(`\n${BOLD}Registering MCP server globally…${RESET}`);
 
 const serverPath = new URL("./index.js", import.meta.url).pathname;
 
+// Remove existing registration first so token updates take effect
 try {
-  execFileSync(
-    "claude",
-    [
-      "mcp",
-      "add",
-      "--scope",
-      "user", // global, persists across all projects
-      "telegram-mcp",
-      "-e",
-      `TELEGRAM_BOT_TOKEN=${token}`,
-      "-e",
-      `TELEGRAM_CHAT_ID=${chatId}`,
-      "--",
-      "node",
-      serverPath,
-    ],
-    { stdio: "inherit" },
-  );
+  execFileSync("claude", ["mcp", "remove", "telegram-mcp", "--scope", "user"], { stdio: "ignore" });
+} catch {
+  try {
+    execFileSync("claude", ["mcp", "remove", "telegram-mcp"], { stdio: "ignore" });
+  } catch {
+    // Not registered yet — that's fine
+  }
+}
+
+try {
+  execFileSync("claude", [
+    "mcp", "add", "--scope", "user",
+    "telegram-mcp",
+    "-e", `TELEGRAM_BOT_TOKEN=${token}`,
+    "-e", `TELEGRAM_CHAT_ID=${chatId}`,
+    "--", "node", serverPath,
+  ], { stdio: "inherit" });
 } catch {
   // Fallback: older Claude Code versions without --scope flag
   try {
-    execFileSync(
-      "claude",
-      [
-        "mcp",
-        "add",
-        "telegram-mcp",
-        "-e",
-        `TELEGRAM_BOT_TOKEN=${token}`,
-        "-e",
-        `TELEGRAM_CHAT_ID=${chatId}`,
-        "--",
-        "node",
-        serverPath,
-      ],
-      { stdio: "inherit" },
-    );
+    execFileSync("claude", [
+      "mcp", "add",
+      "telegram-mcp",
+      "-e", `TELEGRAM_BOT_TOKEN=${token}`,
+      "-e", `TELEGRAM_CHAT_ID=${chatId}`,
+      "--", "node", serverPath,
+    ], { stdio: "inherit" });
   } catch {
     die(
       "`claude mcp add` failed.\n" +
-        "  Update Claude Code: https://docs.claude.ai/claude-code\n\n" +
-        "  Manual config:\n" +
-        `    TELEGRAM_BOT_TOKEN=${token}\n` +
-        `    TELEGRAM_CHAT_ID=${chatId}\n` +
-        `    command: node ${serverPath}`,
+      "  Update Claude Code: https://docs.claude.ai/claude-code\n\n" +
+      "  Manual config:\n" +
+      `    TELEGRAM_BOT_TOKEN=${token}\n` +
+      `    TELEGRAM_CHAT_ID=${chatId}\n` +
+      `    command: node ${serverPath}`
     );
   }
 }
@@ -134,9 +119,7 @@ const commandsDir = join(homedir(), ".claude", "commands");
 mkdirSync(commandsDir, { recursive: true });
 
 const commandPath = join(commandsDir, "use-telegram.md");
-writeFileSync(
-  commandPath,
-  `# use-telegram
+writeFileSync(commandPath, `# use-telegram
 
 Activate Telegram integration for this Claude Code session.
 
@@ -182,8 +165,7 @@ After completing any task, ALWAYS call telegram_listen (no arguments).
 - This keeps the session alive indefinitely until timeout (1 hour of inactivity)
 
 Never exit or stop after a task — always loop back to telegram_listen.
-`,
-);
+`);
 
 ok(`Slash command installed → ${commandPath}`);
 
