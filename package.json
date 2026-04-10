@@ -1,6 +1,6 @@
 {
   "name": "@thxmxx/telegram-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Telegram bridge for Claude Code — notify, ask and choose via your phone",
   "type": "module",
   "repository": {
