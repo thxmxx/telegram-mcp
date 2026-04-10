@@ -3,6 +3,10 @@
   "version": "1.1.0",
   "description": "Telegram bridge for Claude Code — notify, ask and choose via your phone",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thxmxx/telegram-mcp"
+  },
   "bin": {
     "telegram-mcp": "./src/cli.js"
   },
