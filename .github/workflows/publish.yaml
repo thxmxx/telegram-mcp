@@ -12,11 +12,14 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # needed to push the version bump commit
       id-token: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -25,6 +28,39 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          # Get the commit message that triggered this run
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            MSG="${{ github.event.pull_request.title }}"
+          else
+            MSG="$(git log -1 --pretty=%s)"
+          fi
+
+          echo "Commit message: $MSG"
+
+          # Detect breaking change
+          if echo "$MSG" | grep -qiE "BREAKING CHANGE|!:"; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          # feat → minor
+          elif echo "$MSG" | grep -qiE "^feat(\(.+\))?:"; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          # everything else → patch
+          else
+            echo "type=patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          npm version ${{ steps.bump.outputs.type }} --no-git-tag-version
+          VERSION=$(node -p "require('./package.json').version")
+          git add package.json
+          git commit -m "chore: bump version to $VERSION [skip ci]"
+          git push
 
       - name: Publish
         run: npm publish --access public --provenance
