@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
  * @thxmxx/telegram-mcp — MCP server
+ * Uses grammY (https://grammy.dev) for reliable Telegram polling.
  *
  * Tools:
  *   telegram_notify  — send a message (fire and forget)
  *   telegram_ask     — ask a question, wait for text reply
  *   telegram_choose  — show buttons, wait for a tap
- *   telegram_listen  — wait for user to address this instance by name,
- *                      returns the next instruction so Claude can keep working
+ *   telegram_listen  — wait for user to address this instance by name
  */
 
+import { Bot, InlineKeyboard } from "grammy";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import TelegramBot from "node-telegram-bot-api";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,90 +46,77 @@ if (!TOKEN || !CHAT_ID) {
   exit(1);
 }
 
-// ── Auto instance label: folder#shortid ───────────────────────────────────────
+// ── Instance label ────────────────────────────────────────────────────────────
 
 const folder = process.cwd().split("/").pop() || "claude";
 const shortId = randomBytes(2).toString("hex");
 const INSTANCE = `${folder}#${shortId}`;
 const HDR = `\`[${INSTANCE}]\``;
 
-// ── Telegram client ───────────────────────────────────────────────────────────
+// ── Bot ───────────────────────────────────────────────────────────────────────
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new Bot(TOKEN);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Message/callback queues — listeners register themselves and dequeue on match
+const messageListeners = [];
+const callbackListeners = [];
 
-function waitForReply(timeoutMs = 300_000) {
+bot.on("message:text", (ctx) => {
+  if (String(ctx.chat.id) !== String(CHAT_ID)) return;
+  for (const fn of [...messageListeners]) fn(ctx.message.text);
+});
+
+bot.on("callback_query:data", async (ctx) => {
+  if (String(ctx.from.id) !== String(CHAT_ID)) return;
+  await ctx.answerCallbackQuery();
+  for (const fn of [...callbackListeners]) fn(ctx.callbackQuery.data);
+});
+
+bot.catch((err) =>
+  process.stderr.write(`[telegram-mcp] bot error: ${err.message}\n`),
+);
+
+// Start polling (non-blocking)
+bot.start({
+  onStart: () => process.stderr.write(`[telegram-mcp] polling started\n`),
+});
+
+// ── Wait helpers ──────────────────────────────────────────────────────────────
+
+function waitForMessage(filter, timeoutMs = 300_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      bot.removeListener("message", handler);
+      const i = messageListeners.indexOf(handler);
+      if (i !== -1) messageListeners.splice(i, 1);
       reject(new Error("Timed out (5 min)"));
     }, timeoutMs);
-    function handler(msg) {
-      if (String(msg.chat.id) !== String(CHAT_ID)) return;
-      if (msg.text?.startsWith("/")) return;
+
+    function handler(text) {
+      if (!filter(text)) return;
       clearTimeout(timer);
-      bot.removeListener("message", handler);
-      resolve({ source: "telegram", value: msg.text || "" });
+      const i = messageListeners.indexOf(handler);
+      if (i !== -1) messageListeners.splice(i, 1);
+      resolve(text);
     }
-    bot.on("message", handler);
+    messageListeners.push(handler);
   });
 }
 
 function waitForCallback(timeoutMs = 300_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      bot.removeListener("callback_query", handler);
+      const i = callbackListeners.indexOf(handler);
+      if (i !== -1) callbackListeners.splice(i, 1);
       reject(new Error("Timed out (5 min)"));
     }, timeoutMs);
-    function handler(query) {
-      if (String(query.from.id) !== String(CHAT_ID)) return;
+
+    function handler(data) {
       clearTimeout(timer);
-      bot.removeListener("callback_query", handler);
-      bot.answerCallbackQuery(query.id);
-      resolve({ source: "telegram", value: query.data || "" });
+      const i = callbackListeners.indexOf(handler);
+      if (i !== -1) callbackListeners.splice(i, 1);
+      resolve(data);
     }
-    bot.on("callback_query", handler);
-  });
-}
-
-/**
- * Wait for a message addressed to THIS instance.
- * Format: "@instance-label <instruction>"
- * e.g.   "@backend#a3f2 now refactor the auth module"
- *
- * Ignores messages addressed to other instances silently.
- * Times out after `timeoutMs` (default: 1 hour).
- */
-function waitForAddressedMessage(timeoutMs = 3_600_000) {
-  const mention = `@${INSTANCE}`.toLowerCase();
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      bot.removeListener("message", handler);
-      reject(new Error(`No message addressed to ${INSTANCE} within timeout`));
-    }, timeoutMs);
-
-    function handler(msg) {
-      if (String(msg.chat.id) !== String(CHAT_ID)) return;
-      if (!msg.text) return;
-
-      const text = msg.text.trim();
-      const lower = text.toLowerCase();
-
-      // Message must start with @instance-label
-      if (!lower.startsWith(mention)) return;
-
-      // Extract the instruction after the mention
-      const instruction = text.slice(mention.length).trim();
-      if (!instruction) return;
-
-      clearTimeout(timer);
-      bot.removeListener("message", handler);
-      resolve(instruction);
-    }
-
-    bot.on("message", handler);
+    callbackListeners.push(handler);
   });
 }
 
@@ -146,7 +133,10 @@ function terminalPrompt(question) {
 
 function raceReply(question) {
   return Promise.race([
-    waitForReply(),
+    waitForMessage((t) => !t.startsWith("/")).then((v) => ({
+      source: "telegram",
+      value: v,
+    })),
     terminalPrompt(question).then((v) => ({ source: "terminal", value: v })),
   ]);
 }
@@ -154,7 +144,7 @@ function raceReply(question) {
 function raceCallback(question, options) {
   const numbered = options.map((o, i) => `  ${i + 1}. ${o}`).join("\n");
   return Promise.race([
-    waitForCallback(),
+    waitForCallback().then((v) => ({ source: "telegram", value: v })),
     terminalPrompt(
       `${question}\n${numbered}\nChoose (1-${options.length})`,
     ).then((v) => {
@@ -168,14 +158,12 @@ function raceCallback(question, options) {
 
 const server = new McpServer({ name: "telegram-mcp", version: "1.0.0" });
 
-// ── telegram_notify ───────────────────────────────────────────────────────────
-
 server.tool(
   "telegram_notify",
-  "Send a Telegram notification to the user. Use for progress updates and task completions. Does NOT wait for a reply.",
-  { message: z.string().describe("The message to send") },
+  "Send a Telegram notification. Use for progress updates and task completions. Does NOT wait for a reply.",
+  { message: z.string() },
   async ({ message }) => {
-    await bot.sendMessage(CHAT_ID, `${HDR} ${message}`, {
+    await bot.api.sendMessage(CHAT_ID, `${HDR} ${message}`, {
       parse_mode: "Markdown",
     });
     process.stderr.write(`[${INSTANCE}] notify: ${message}\n`);
@@ -183,19 +171,17 @@ server.tool(
   },
 );
 
-// ── telegram_ask ──────────────────────────────────────────────────────────────
-
 server.tool(
   "telegram_ask",
-  "Ask the user a free-form question via Telegram and wait for their reply. The same question appears on the terminal — whoever answers first wins.",
-  { question: z.string().describe("The question to ask") },
+  "Ask the user a free-form question via Telegram and wait for their reply. Also shown on terminal — first to answer wins.",
+  { question: z.string() },
   async ({ question }) => {
-    await bot.sendMessage(CHAT_ID, `${HDR} ❓ ${question}`, {
+    await bot.api.sendMessage(CHAT_ID, `${HDR} ❓ ${question}`, {
       parse_mode: "Markdown",
     });
     const { source, value } = await raceReply(question);
     if (source === "terminal") {
-      await bot.sendMessage(
+      await bot.api.sendMessage(
         CHAT_ID,
         `${HDR} ✅ Answered from terminal: *${value}*`,
         { parse_mode: "Markdown" },
@@ -206,69 +192,62 @@ server.tool(
   },
 );
 
-// ── telegram_choose ───────────────────────────────────────────────────────────
-
 server.tool(
   "telegram_choose",
-  "Ask the user to pick one option. Shows inline buttons on Telegram and a numbered list on the terminal. Whoever responds first wins.",
+  "Show option buttons on Telegram and wait for the user to tap one. Also shown as numbered list on terminal — first to answer wins.",
   {
-    question: z.string().describe("The question or prompt"),
-    options: z
-      .array(z.string())
-      .min(2)
-      .max(10)
-      .describe("Options to present (2–10)"),
+    question: z.string(),
+    options: z.array(z.string()).min(2).max(10),
   },
   async ({ question, options }) => {
-    const keyboard = {
-      inline_keyboard: options.map((opt) => [
-        { text: opt, callback_data: opt },
-      ]),
-    };
-    await bot.sendMessage(CHAT_ID, `${HDR} 🔘 ${question}`, {
+    const keyboard = new InlineKeyboard();
+    options.forEach((opt) => keyboard.text(opt, opt).row());
+    await bot.api.sendMessage(CHAT_ID, `${HDR} 🔘 ${question}`, {
       parse_mode: "Markdown",
       reply_markup: keyboard,
     });
     const { source, value } = await raceCallback(question, options);
-    await bot.sendMessage(CHAT_ID, `${HDR} ✅ *${value}* _(via ${source})_`, {
-      parse_mode: "Markdown",
-    });
+    await bot.api.sendMessage(
+      CHAT_ID,
+      `${HDR} ✅ *${value}* _(via ${source})_`,
+      { parse_mode: "Markdown" },
+    );
     process.stderr.write(`[${INSTANCE}] choose (${source}): ${value}\n`);
     return { content: [{ type: "text", text: value }] };
   },
 );
 
-// ── telegram_listen ───────────────────────────────────────────────────────────
-
 server.tool(
   "telegram_listen",
-  `Wait for the user to send a new instruction addressed to this instance on Telegram.
-   Call this after completing a task to stay available for follow-up work.
-   The user must address messages as: @${INSTANCE} <instruction>
-   Returns the instruction text when received. Times out after 1 hour of inactivity.
-   When this tool returns, execute the instruction and call telegram_listen again when done.`,
+  `Wait for the user to send a new instruction addressed to this instance.
+   Format: @${INSTANCE} <instruction>
+   Call this after completing a task to stay available. Returns the instruction text.
+   Times out after 1 hour of inactivity. When it returns, execute the instruction then call telegram_listen again.`,
   {},
   async () => {
-    await bot.sendMessage(
+    await bot.api.sendMessage(
       CHAT_ID,
-      `${HDR} ✅ Task complete — waiting for your next instruction.\n` +
-        `_Address me as_ \`@${INSTANCE} <your instruction>\``,
+      `${HDR} ✅ Task complete — waiting for next instruction.\n_Address me as_ \`@${INSTANCE} <instruction>\``,
       { parse_mode: "Markdown" },
     );
+    process.stderr.write(`[${INSTANCE}] listening for @${INSTANCE}...\n`);
 
-    process.stderr.write(`[${INSTANCE}] listening for @${INSTANCE} ...\n`);
-
+    const mention = `@${INSTANCE}`.toLowerCase();
     try {
-      const instruction = await waitForAddressedMessage();
+      const text = await waitForMessage(
+        (t) =>
+          t.toLowerCase().startsWith(mention) &&
+          t.trim().length > mention.length,
+        3_600_000,
+      );
+      const instruction = text.slice(mention.length).trim();
       process.stderr.write(`[${INSTANCE}] received: ${instruction}\n`);
       return { content: [{ type: "text", text: instruction }] };
     } catch (err) {
-      await bot.sendMessage(
+      await bot.api.sendMessage(
         CHAT_ID,
         `${HDR} 💤 Timed out after 1 hour of inactivity.`,
-        {
-          parse_mode: "Markdown",
-        },
+        { parse_mode: "Markdown" },
       );
       return { content: [{ type: "text", text: `timeout: ${err.message}` }] };
     }
