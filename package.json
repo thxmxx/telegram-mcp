@@ -10,6 +10,9 @@
   "bin": {
     "telegram-mcp": "./src/cli.js"
   },
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "grammy": "^1.42.0",
